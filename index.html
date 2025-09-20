@@ -7,7 +7,7 @@
   <style>
     body {
       font-family: 'Georgia', serif;
-      background: #f9f9f9 url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><text x="0" y="20" font-size="20" fill="gray" fill-opacity="0.05">⚖️ LAW</text></svg>') repeat;
+      background: #f9f9f9;
       margin: 0;
       padding: 0;
       font-size: 17px;
@@ -31,11 +31,6 @@
       margin: 0;
       font-size: 30px;
       color: #2c3e50;
-    }
-
-    .header p {
-      color: #555;
-      font-size: 16px;
     }
 
     label {
@@ -100,10 +95,6 @@
       width: 220px;
     }
 
-    textarea {
-      resize: vertical;
-    }
-
     button {
       margin-right: 10px;
       padding: 12px 24px;
@@ -113,10 +104,6 @@
       border: none;
       border-radius: 5px;
       cursor: pointer;
-    }
-
-    button:hover {
-      background-color: #1a252f;
     }
 
     .footer {
@@ -131,11 +118,8 @@
   <div class="container">
     <div class="header">
       <h1>⚖️ GR Law Associates</h1>
-      <p>Legal Diary – Calendar-Based Case Notes</p>
+      <p>Legal Diary – Shared Case Notes</p>
     </div>
-
-    <label for="diary-date">Select Date:</label>
-    <input type="date" id="diary-date" />
 
     <table id="entry-table">
       <thead>
@@ -149,7 +133,7 @@
         </tr>
       </thead>
       <tbody id="table-body">
-        <!-- Rows will be added dynamically -->
+        <!-- Dynamic rows -->
       </tbody>
     </table>
 
@@ -157,76 +141,30 @@
     <button onclick="saveData()">💾 Save</button>
 
     <div class="footer">
-      
+      Shared data is stored online using JSONBin.io
     </div>
   </div>
 
   <script>
-    const dateInput = document.getElementById('diary-date');
+    const BIN_ID = "68ce7906d0ea881f40841738";
+    const API_KEY = "$2a$10$GwDXFvtEhClzqllIuIQJ3el9JGyLP8nAjFCXD7yE/c3.4w9LpHd3.";
+
     const tableBody = document.getElementById('table-body');
 
-    // On load, show today's date
-    window.onload = function () {
-      const today = new Date().toISOString().split('T')[0];
-      dateInput.value = today;
-      loadData(today);
-    };
-
-    // Load data when date changes
-    dateInput.addEventListener('change', () => {
-      loadData(dateInput.value);
-    });
-
-    // Add a new row (with optional pre-filled data)
     function addRow(data = {}) {
       const row = document.createElement('tr');
-
       row.innerHTML = `
-        <td><input type="text" value="${data.prevDate || ''}" placeholder="DD-MM-YYYY" readonly></td>
+        <td><input type="text" value="${data.prevDate || ''}" placeholder="DD-MM-YYYY"></td>
         <td><input type="text" value="${data.courtName || ''}"></td>
         <td><input type="text" value="${data.caseNo || ''}" style="width:220px;"></td>
         <td><textarea style="height:100px; width:260px;">${data.details || ''}</textarea></td>
         <td><input type="text" value="${data.clientName || ''}" style="width:220px;"></td>
-        <td><input type="text" value="${data.nextDate || ''}" placeholder="DD-MM-YYYY" onblur="handleNextDate(this)"></td>
+        <td><input type="text" value="${data.nextDate || ''}" placeholder="DD-MM-YYYY"></td>
       `;
-
       tableBody.appendChild(row);
     }
 
-    // Handle "Next Hearing Date" input
-    function handleNextDate(input) {
-      const nextDateRaw = input.value.trim();
-      if (!nextDateRaw) return;
-
-      const futureKeyDate = formatDateToKey(nextDateRaw);
-      if (!futureKeyDate) return;
-
-      const currentDiaryDate = dateInput.value;
-      const row = input.closest('tr');
-      const inputs = row.querySelectorAll('input, textarea');
-
-      const copiedRow = {
-        prevDate: formatDateDisplay(currentDiaryDate),
-        courtName: inputs[1].value,
-        caseNo: inputs[2].value,
-        details: inputs[3].value,
-        clientName: inputs[4].value,
-        nextDate: '' // blank in the future
-      };
-
-      const futureKey = "grlaw_table_" + futureKeyDate;
-      let futureData = localStorage.getItem(futureKey);
-      futureData = futureData ? JSON.parse(futureData) : [];
-
-      futureData.push(copiedRow);
-      localStorage.setItem(futureKey, JSON.stringify(futureData));
-
-      console.log(`✅ Row copied to ${futureKeyDate}`, copiedRow);
-      // Optional: alert(`✅ Row copied to ${futureKeyDate}`);
-    }
-
-    // Save all rows to localStorage
-    function saveData() {
+    async function saveData() {
       const rows = tableBody.querySelectorAll('tr');
       const data = [];
 
@@ -242,49 +180,48 @@
         });
       });
 
-      const key = "grlaw_table_" + dateInput.value;
-      localStorage.setItem(key, JSON.stringify(data));
-      alert("💾 Entries saved for " + dateInput.value);
-    }
+      try {
+        const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Master-Key": API_KEY
+          },
+          body: JSON.stringify(data)
+        });
 
-    // Load diary entries for a given date
-    function loadData(date) {
-      tableBody.innerHTML = "";
-      const key = "grlaw_table_" + date;
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        const entries = JSON.parse(saved);
-        entries.forEach(entry => addRow(entry));
-      } else {
-        addRow(); // add an empty row if nothing exists
+        if (res.ok) {
+          alert("✅ Data saved to JSONBin.io");
+        } else {
+          alert("❌ Error saving data.");
+        }
+      } catch (error) {
+        alert("❌ Network error.");
       }
     }
 
-    // Converts DD-MM-YYYY or YYYY-MM-DD to YYYY-MM-DD
-    function formatDateToKey(dateStr) {
-      if (!dateStr.includes("-")) return null;
-      const parts = dateStr.split("-");
-      if (parts.length !== 3) return null;
+    async function loadData() {
+      try {
+        const res = await fetch(`https://api.jsonbin.io/v3/b/${BIN_ID}/latest`, {
+          headers: { "X-Master-Key": API_KEY }
+        });
 
-      if (parts[0].length === 4) {
-        // Already YYYY-MM-DD
-        return dateStr;
-      } else if (parts[2].length === 4) {
-        // Convert DD-MM-YYYY to YYYY-MM-DD
-        return `${parts[2]}-${parts[1]}-${parts[0]}`;
+        const json = await res.json();
+        const entries = json.record;
+
+        tableBody.innerHTML = "";
+        if (Array.isArray(entries) && entries.length > 0) {
+          entries.forEach(entry => addRow(entry));
+        } else {
+          addRow(); // Add empty row
+        }
+      } catch (error) {
+        alert("⚠️ Failed to load data. Check your internet or bin settings.");
+        addRow(); // Add empty row
       }
-
-      alert("⚠️ Please use DD-MM-YYYY or YYYY-MM-DD format for date.");
-      return null;
     }
 
-    // Converts YYYY-MM-DD to DD-MM-YYYY
-    function formatDateDisplay(dateStr) {
-      const parts = dateStr.split("-");
-      if (parts.length !== 3) return dateStr;
-      return `${parts[2]}-${parts[1]}-${parts[0]}`;
-    }
+    window.onload = loadData;
   </script>
 </body>
 </html>
-
