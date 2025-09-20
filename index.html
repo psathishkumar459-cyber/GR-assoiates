@@ -157,7 +157,7 @@
     <button onclick="saveData()">💾 Save</button>
 
     <div class="footer">
-      Entries are stored locally on your device and remain private.
+      Entries are stored online and shared across devices.
     </div>
   </div>
 
@@ -165,7 +165,11 @@
     const dateInput = document.getElementById('diary-date');
     const tableBody = document.getElementById('table-body');
 
-    // On load, show today's date
+    // JSONBin.io settings
+    const BIN_ID = '68ce7906d0ea881f40841738';
+    const API_KEY = '$2a$10$GwDXFvtEhClzqllIuIQJ3el9JGyLP8nAjFCXD7yE/c3.4w9LpHd3.'; // Your API key
+
+    // On load, show today's date and load entries
     window.onload = function () {
       const today = new Date().toISOString().split('T')[0];
       dateInput.value = today;
@@ -214,19 +218,18 @@
         nextDate: '' // blank in the future
       };
 
-      const futureKey = "grlaw_table_" + futureKeyDate;
-      let futureData = localStorage.getItem(futureKey);
-      futureData = futureData ? JSON.parse(futureData) : [];
-
-      futureData.push(copiedRow);
-      localStorage.setItem(futureKey, JSON.stringify(futureData));
-
-      console.log(`✅ Row copied to ${futureKeyDate}`, copiedRow);
-      // Optional: alert(`✅ Row copied to ${futureKeyDate}`);
+      // Load existing bin data, add copiedRow to future date, then save back
+      loadBinData().then(binData => {
+        if (!binData[futureKeyDate]) binData[futureKeyDate] = [];
+        binData[futureKeyDate].push(copiedRow);
+        saveBinData(binData).then(() => {
+          console.log(`✅ Row copied to ${futureKeyDate}`, copiedRow);
+        });
+      });
     }
 
-    // Save all rows to localStorage
-    function saveData() {
+    // Save all rows to JSONBin.io
+    async function saveData() {
       const rows = tableBody.querySelectorAll('tr');
       const data = [];
 
@@ -242,22 +245,59 @@
         });
       });
 
-      const key = "grlaw_table_" + dateInput.value;
-      localStorage.setItem(key, JSON.stringify(data));
-      alert("💾 Entries saved for " + dateInput.value);
+      try {
+        let binData = await loadBinData();
+        binData[dateInput.value] = data; // update date entries
+        await saveBinData(binData);
+        alert("💾 Entries saved online for " + dateInput.value);
+      } catch (error) {
+        alert("❌ Failed to save data: " + error.message);
+      }
     }
 
-    // Load diary entries for a given date
-    function loadData(date) {
+    // Load diary entries for a given date from JSONBin.io
+    async function loadData(date) {
       tableBody.innerHTML = "";
-      const key = "grlaw_table_" + date;
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        const entries = JSON.parse(saved);
-        entries.forEach(entry => addRow(entry));
-      } else {
-        addRow(); // add an empty row if nothing exists
+      try {
+        const binData = await loadBinData();
+        const entries = binData[date] || [];
+        if (entries.length) {
+          entries.forEach(entry => addRow(entry));
+        } else {
+          addRow(); // add an empty row if nothing exists
+        }
+      } catch (error) {
+        alert("❌ Failed to load data: " + error.message);
+        addRow(); // fallback to empty row
       }
+    }
+
+    // Load full JSON bin data from JSONBin.io
+    async function loadBinData() {
+      const url = `https://api.jsonbin.io/v3/b/${BIN_ID}/latest`;
+      const response = await fetch(url, {
+        headers: {
+          'X-Master-Key': API_KEY
+        }
+      });
+      if (!response.ok) throw new Error('Could not fetch bin data');
+      const json = await response.json();
+      return json.record || {};
+    }
+
+    // Save full JSON bin data back to JSONBin.io
+    async function saveBinData(data) {
+      const url = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': API_KEY
+        },
+        body: JSON.stringify(data)
+      });
+      if (!response.ok) throw new Error('Could not save bin data');
+      return await response.json();
     }
 
     // Converts DD-MM-YYYY or YYYY-MM-DD to YYYY-MM-DD
