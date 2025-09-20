@@ -157,34 +157,33 @@
     <button onclick="saveData()">💾 Save</button>
 
     <div class="footer">
-      Entries are stored online and shared across devices.
+      Entries are stored online and synchronized across devices.
     </div>
   </div>
 
   <script>
+    // Your JSONBin.io credentials
+    const BIN_ID = '68ce7906d0ea881f40841738';
+    const API_KEY = '$2a$10$GwDXFvtEhClzqllIuIQJ3el9JGyLP8nAjFCXD7yE/c3.4w9LpHd3.';
+
     const dateInput = document.getElementById('diary-date');
     const tableBody = document.getElementById('table-body');
 
-    // JSONBin.io settings
-    const BIN_ID = '68ce7906d0ea881f40841738';
-    const API_KEY = '$2a$10$GwDXFvtEhClzqllIuIQJ3el9JGyLP8nAjFCXD7yE/c3.4w9LpHd3.'; // Your API key 
+    let currentBinVersion = null;
+    let binDataCache = {};
 
-    // On load, show today's date and load entries
-    window.onload = function () {
+    window.onload = () => {
       const today = new Date().toISOString().split('T')[0];
       dateInput.value = today;
-      loadData(today);
+      loadAndShow(today);
     };
 
-    // Load data when date changes
     dateInput.addEventListener('change', () => {
-      loadData(dateInput.value);
+      loadAndShow(dateInput.value);
     });
 
-    // Add a new row (with optional pre-filled data)
     function addRow(data = {}) {
       const row = document.createElement('tr');
-
       row.innerHTML = `
         <td><input type="text" value="${data.prevDate || ''}" placeholder="DD-MM-YYYY" readonly></td>
         <td><input type="text" value="${data.courtName || ''}"></td>
@@ -193,49 +192,92 @@
         <td><input type="text" value="${data.clientName || ''}" style="width:220px;"></td>
         <td><input type="text" value="${data.nextDate || ''}" placeholder="DD-MM-YYYY" onblur="handleNextDate(this)"></td>
       `;
-
       tableBody.appendChild(row);
     }
 
-    // Handle "Next Hearing Date" input
-    function handleNextDate(input) {
-      const nextDateRaw = input.value.trim();
-      if (!nextDateRaw) return;
-
-      const futureKeyDate = formatDateToKey(nextDateRaw);
-      if (!futureKeyDate) return;
-
-      const currentDiaryDate = dateInput.value;
-      const row = input.closest('tr');
-      const inputs = row.querySelectorAll('input, textarea');
-
-      const copiedRow = {
-        prevDate: formatDateDisplay(currentDiaryDate),
-        courtName: inputs[1].value,
-        caseNo: inputs[2].value,
-        details: inputs[3].value,
-        clientName: inputs[4].value,
-        nextDate: '' // blank in the future
-      };
-
-      // Load existing bin data, add copiedRow to future date, then save back
-      loadBinData().then(binData => {
-        if (!binData[futureKeyDate]) binData[futureKeyDate] = [];
-        binData[futureKeyDate].push(copiedRow);
-        saveBinData(binData).then(() => {
-          console.log(`✅ Row copied to ${futureKeyDate}`, copiedRow);
-        });
+    async function fetchBin() {
+      const url = `https://api.jsonbin.io/v3/b/${BIN_ID}/latest`;
+      const res = await fetch(url, {
+        headers: {
+          'X-Master-Key': API_KEY
+        }
       });
+      if (!res.ok) {
+        throw new Error('Failed to fetch bin: ' + res.statusText);
+      }
+      const json = await res.json();
+      binDataCache = json.record || {};
+      currentBinVersion = json.metadata.version;
+      return binDataCache;
     }
 
-    // Save all rows to JSONBin.io
-    async function saveData() {
-      const rows = tableBody.querySelectorAll('tr');
-      const data = [];
+    async function putBin(data) {
+      const url = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': API_KEY,
+          'X-Bin-Version': currentBinVersion
+        },
+        body: JSON.stringify(data)
+      });
+      if (res.status === 409) {
+        throw new Error('Conflict');
+      }
+      if (!res.ok) {
+        throw new Error('Failed to save bin: ' + res.statusText);
+      }
+      const j = await res.json();
+      // update version
+      currentBinVersion = j.metadata.version;
+      binDataCache = data;
+      return j;
+    }
 
-      rows.forEach(row => {
-        const inputs = row.querySelectorAll('input, textarea');
-        data.push({
+    function mergeData(oldData, newData) {
+      const merged = {...oldData};
+      for (const dateKey in newData) {
+        if (!merged[dateKey]) {
+          merged[dateKey] = newData[dateKey];
+        } else {
+          // avoid duplicates
+          const existing = merged[dateKey].map(e => JSON.stringify(e));
+          newData[dateKey].forEach(entry => {
+            const s = JSON.stringify(entry);
+            if (!existing.includes(s)) {
+              merged[dateKey].push(entry);
+              existing.push(s);
+            }
+          });
+        }
+      }
+      return merged;
+    }
+
+    async function loadAndShow(date) {
+      tableBody.innerHTML = '';
+      try {
+        await fetchBin();
+        const entries = binDataCache[date] || [];
+        if (entries.length === 0) {
+          addRow();
+        } else {
+          entries.forEach(e => addRow(e));
+        }
+      } catch (err) {
+        alert('Error loading data: ' + err.message);
+        addRow();
+      }
+    }
+
+    async function saveData() {
+      // collect rows
+      const rows = tableBody.querySelectorAll('tr');
+      const newEntries = [];
+      rows.forEach(r => {
+        const inputs = r.querySelectorAll('input, textarea');
+        newEntries.push({
           prevDate: inputs[0].value,
           courtName: inputs[1].value,
           caseNo: inputs[2].value,
@@ -246,86 +288,84 @@
       });
 
       try {
-        let binData = await loadBinData();
-        binData[dateInput.value] = data; // update date entries
-        await saveBinData(binData);
-        alert("💾 Entries saved online for " + dateInput.value);
-      } catch (error) {
-        alert("❌ Failed to save data: " + error.message);
-      }
-    }
-
-    // Load diary entries for a given date from JSONBin.io
-    async function loadData(date) {
-      tableBody.innerHTML = "";
-      try {
-        const binData = await loadBinData();
-        const entries = binData[date] || [];
-        if (entries.length) {
-          entries.forEach(entry => addRow(entry));
+        const oldData = await fetchBin();
+        const merged = mergeData(oldData, { [dateInput.value]: newEntries });
+        await putBin(merged);
+        alert('💾 Entries saved for ' + dateInput.value);
+      } catch (err) {
+        if (err.message === 'Conflict') {
+          alert('⚠️ Conflict detected. Merging and retrying...');
+          // Retry once
+          try {
+            const oldData2 = await fetchBin();
+            const merged2 = mergeData(oldData2, { [dateInput.value]: newEntries });
+            await putBin(merged2);
+            alert('💾 Entries saved after resolving conflict for ' + dateInput.value);
+          } catch (err2) {
+            alert('❌ Could not save after retry: ' + err2.message);
+          }
         } else {
-          addRow(); // add an empty row if nothing exists
+          alert('❌ Save failed: ' + err.message);
         }
-      } catch (error) {
-        alert("❌ Failed to load data: " + error.message);
-        addRow(); // fallback to empty row
       }
     }
 
-    // Load full JSON bin data from JSONBin.io
-    async function loadBinData() {
-      const url = `https://api.jsonbin.io/v3/b/${BIN_ID}/latest`;
-      const response = await fetch(url, {
-        headers: {
-          'X-Master-Key': API_KEY
+    async function handleNextDate(input) {
+      const val = input.value.trim();
+      if (!val) return;
+      const fk = formatDateToKey(val);
+      if (!fk) return;
+      const curDate = dateInput.value;
+
+      const row = input.closest('tr');
+      const inputs = row.querySelectorAll('input, textarea');
+      const copied = {
+        prevDate: formatDateDisplay(curDate),
+        courtName: inputs[1].value,
+        caseNo: inputs[2].value,
+        details: inputs[3].value,
+        clientName: inputs[4].value,
+        nextDate: ''
+      };
+
+      try {
+        const oldData = await fetchBin();
+        const entriesFuture = oldData[fk] || [];
+        const serialized = entriesFuture.map(e => JSON.stringify(e));
+        if (!serialized.includes(JSON.stringify(copied))) {
+          // add
+          entriesFuture.push(copied);
         }
-      });
-      if (!response.ok) throw new Error('Could not fetch bin data');
-      const json = await response.json();
-      return json.record || {};
+        const merged = mergeData(oldData, { [fk]: entriesFuture });
+        await putBin(merged);
+        alert('✅ Entry copied to ' + formatDateDisplay(fk));
+      } catch (err) {
+        if (err.message === 'Conflict') {
+          alert('⚠️ Conflict detected when copying next date. Please try again.');
+        } else {
+          alert('❌ Failed to copy next hearing date: ' + err.message);
+        }
+      }
     }
 
-    // Save full JSON bin data back to JSONBin.io
-    async function saveBinData(data) {
-      const url = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
-      const response = await fetch(url, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Master-Key': API_KEY
-        },
-        body: JSON.stringify(data)
-      });
-      if (!response.ok) throw new Error('Could not save bin data');
-      return await response.json();
-    }
-
-    // Converts DD-MM-YYYY or YYYY-MM-DD to YYYY-MM-DD
     function formatDateToKey(dateStr) {
-      if (!dateStr.includes("-")) return null;
-      const parts = dateStr.split("-");
+      if (!dateStr.includes('-')) return null;
+      const parts = dateStr.split('-');
       if (parts.length !== 3) return null;
-
       if (parts[0].length === 4) {
-        // Already YYYY-MM-DD
         return dateStr;
       } else if (parts[2].length === 4) {
-        // Convert DD-MM-YYYY to YYYY-MM-DD
+        // DD-MM-YYYY → YYYY-MM-DD
         return `${parts[2]}-${parts[1]}-${parts[0]}`;
       }
-
-      alert("⚠️ Please use DD-MM-YYYY or YYYY-MM-DD format for date.");
       return null;
     }
 
-    // Converts YYYY-MM-DD to DD-MM-YYYY
-    function formatDateDisplay(dateStr) {
-      const parts = dateStr.split("-");
-      if (parts.length !== 3) return dateStr;
+    function formatDateDisplay(isoDate) {
+      const parts = isoDate.split('-');
+      if (parts.length !== 3) return isoDate;
       return `${parts[2]}-${parts[1]}-${parts[0]}`;
     }
   </script>
 </body>
 </html>
-
-
